@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -101,6 +103,15 @@ public class StatsController {
     /** Frontend sentinel for "placette without a field-observed écosystème". */
     private static final String NO_FORMATION = "__sans_formation__";
 
+    /** "a, b,,c" -> ["a","b","c"] — the multi-select filters send one comma-joined value. */
+    private static List<String> splitValues(String raw) {
+        return Arrays.stream(raw.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    private static String placeholders(int n) {
+        return String.join(",", Collections.nCopies(n, "?"));
+    }
+
     @GetMapping("/global")
     public ResponseEntity<Map<String, Object>> getGlobal(
             @RequestParam(required = false) String formation,
@@ -108,37 +119,51 @@ public class StatsController {
             @RequestParam(required = false) String strate) {
 
         // The "Analyse forestière" selection narrows the set the indicators are computed
-        // over. Values are bound as parameters, never concatenated into the SQL.
+        // over. Each param is a multi-select from the UI, sent as a comma-separated list;
+        // values are always bound as parameters, never concatenated into the SQL.
         StringBuilder where = new StringBuilder();
         List<Object> params = new ArrayList<>();
 
         if (formation != null && !formation.isBlank()) {
-            if (NO_FORMATION.equals(formation)) {
-                where.append(" AND pc.formation IS NULL");
-            } else {
-                where.append(" AND pc.formation = ?");
-                params.add(formation);
+            List<String> values = splitValues(formation);
+            List<String> named = values.stream().filter(v -> !NO_FORMATION.equals(v)).toList();
+            boolean wantsNull = values.contains(NO_FORMATION);
+
+            List<String> clauses = new ArrayList<>();
+            if (!named.isEmpty()) {
+                clauses.add("pc.formation IN (" + placeholders(named.size()) + ")");
+                params.addAll(named);
             }
+            if (wantsNull) clauses.add("pc.formation IS NULL");
+            if (!clauses.isEmpty()) where.append(" AND (").append(String.join(" OR ", clauses)).append(")");
         }
         if (composition != null && !composition.isBlank()) {
-            if (!composition.equals("pure") && !composition.equals("melange")) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Composition invalide: " + composition));
+            List<String> values = splitValues(composition);
+            for (String v : values) {
+                if (!v.equals("pure") && !v.equals("melange")) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Composition invalide: " + v));
+                }
             }
-            where.append(" AND pc.composition = ?");
-            params.add(composition);
+            where.append(" AND pc.composition IN (").append(placeholders(values.size())).append(")");
+            params.addAll(values);
         }
         if (strate != null && !strate.isBlank()) {
-            int niveau;
-            try {
-                niveau = Integer.parseInt(strate);
-            } catch (NumberFormatException e) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Strate invalide: " + strate));
+            List<String> raw = splitValues(strate);
+            List<Integer> niveaux = new ArrayList<>();
+            for (String v : raw) {
+                int n;
+                try {
+                    n = Integer.parseInt(v);
+                } catch (NumberFormatException e) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Strate invalide: " + v));
+                }
+                if (n < 1 || n > 3) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Strate invalide: " + v));
+                }
+                niveaux.add(n);
             }
-            if (niveau < 1 || niveau > 3) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Strate invalide: " + strate));
-            }
-            where.append(" AND pc.strate_niveau = ?");
-            params.add(niveau);
+            where.append(" AND pc.strate_niveau IN (").append(placeholders(niveaux.size())).append(")");
+            params.addAll(niveaux);
         }
 
         // Self-contained scalar subqueries — kept out of the FROM clause so they don't

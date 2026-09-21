@@ -62,14 +62,16 @@ export interface GlobalStats {
   nb_morts_total: number;
 }
 
-/** Indicateurs globaux, recalculés côté serveur pour la sélection en cours. */
+/** Indicateurs globaux, recalculés côté serveur pour la sélection en cours. Chaque filtre
+ *  accepte plusieurs valeurs (multi-sélection), envoyées comme une liste séparée par des
+ *  virgules — le backend les combine avec un OR (voir StatsController#getGlobal). */
 export async function fetchGlobalStats(
-  filter: { formation?: string; composition?: string; strate?: string } = {},
+  filter: { formation?: string[]; composition?: string[]; strate?: string[] } = {},
 ): Promise<GlobalStats> {
   const qs = new URLSearchParams();
-  if (filter.formation) qs.set('formation', filter.formation);
-  if (filter.composition) qs.set('composition', filter.composition);
-  if (filter.strate) qs.set('strate', filter.strate);
+  if (filter.formation?.length) qs.set('formation', filter.formation.join(','));
+  if (filter.composition?.length) qs.set('composition', filter.composition.join(','));
+  if (filter.strate?.length) qs.set('strate', filter.strate.join(','));
   const suffix = qs.toString() ? `?${qs}` : '';
   const res = await fetch(`/api/stats/global${suffix}`, { headers: authHeaders() });
   if (res.status === 401) { clearAuth(); throw new Error('Session expirée'); }

@@ -44,29 +44,39 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
 }) {
   const [tab, setTab] = useState<Tab>('ecosysteme');
 
-  const selectedEco = analyse.ecosysteme || ecosystemes[0] || '';
+  // Composition/strate breakdowns are scoped to whatever's selected in the top bar's
+  // Écosystème filter — every selected formation when there's a selection, all of them
+  // when there isn't (so "no filter" reads as the whole programme, not an arbitrary one).
+  const selectedEcos = analyse.ecosysteme.length > 0 ? analyse.ecosysteme : ecosystemes;
+  const singleEco = selectedEcos.length === 1 ? selectedEcos[0] : null;
+  const showFormation = selectedEcos.length > 1;
 
-  const summary = rows.find(r => r.formation === selectedEco && r.g_comp === 1 && r.g_strate === 1);
+  const summary = singleEco ? rows.find(r => r.formation === singleEco && r.g_comp === 1 && r.g_strate === 1) : undefined;
 
-  /** Rows shown in the table, per tab + the top-bar composition/strate filters. */
+  /** Rows shown in the table, per tab + the top-bar écosystème/composition/strate filters. */
   const tableRows = useMemo(() => {
-    const byEco = rows.filter(r => r.formation === selectedEco);
-    const compoOk = (r: FormationRow) => !analyse.composition || r.composition === analyse.composition;
-    const strateOk = (r: FormationRow) => !analyse.strate || String(r.strate_niveau) === analyse.strate;
+    const byEcos = rows.filter(r => selectedEcos.includes(r.formation));
+    const ecoOk = (r: FormationRow) => analyse.ecosysteme.length === 0 || analyse.ecosysteme.includes(r.formation);
+    const compoOk = (r: FormationRow) =>
+      analyse.composition.length === 0 || (r.composition != null && analyse.composition.includes(r.composition));
+    const strateOk = (r: FormationRow) =>
+      analyse.strate.length === 0 || (r.strate_niveau != null && analyse.strate.includes(String(r.strate_niveau)));
 
     if (tab === 'ecosysteme') {
       // one line per écosystème, so formations can be compared side by side — including
       // those with placettes but no measured tree, whose cells simply read "—".
-      return rows.filter(r => r.g_comp === 1 && r.g_strate === 1)
+      return rows.filter(r => r.g_comp === 1 && r.g_strate === 1).filter(ecoOk)
         .sort((a, b) => b.nb_placettes - a.nb_placettes);
     }
     if (tab === 'composition') {
-      return byEco.filter(r => r.g_comp === 0 && r.g_strate === 1).filter(compoOk);
+      return byEcos.filter(r => r.g_comp === 0 && r.g_strate === 1).filter(compoOk)
+        .sort((a, b) => a.formation.localeCompare(b.formation) || (a.composition ?? '').localeCompare(b.composition ?? ''));
     }
-    return byEco.filter(r => r.g_comp === 0 && r.g_strate === 0).filter(compoOk).filter(strateOk)
-      .sort((a, b) => (a.composition ?? '').localeCompare(b.composition ?? '')
+    return byEcos.filter(r => r.g_comp === 0 && r.g_strate === 0).filter(compoOk).filter(strateOk)
+      .sort((a, b) => a.formation.localeCompare(b.formation)
+        || (a.composition ?? '').localeCompare(b.composition ?? '')
         || (a.strate_niveau ?? 9) - (b.strate_niveau ?? 9));
-  }, [rows, selectedEco, tab, analyse.composition, analyse.strate]);
+  }, [rows, selectedEcos, tab, analyse.ecosysteme, analyse.composition, analyse.strate]);
 
   const metricCols = INDICATEURS;
   const ranges = useMemo(() => {
@@ -78,18 +88,21 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
     return out;
   }, [tableRows, metricCols]);
 
-  /** Stacked columns: share of placettes per strate, within each composition. */
+  /** Stacked columns: share of placettes per strate, within each composition — summed
+   *  across every selected écosystème (a plain placette count, so summing is valid; the
+   *  per-hectare means in the table above are not, which is why those stay per-formation). */
   const stackGroups = useMemo(() => {
-    const strateRows = rows.filter(r => r.formation === selectedEco && r.g_comp === 0 && r.g_strate === 0);
+    const strateRows = rows.filter(r => selectedEcos.includes(r.formation) && r.g_comp === 0 && r.g_strate === 0);
     return (['pure', 'melange'] as const).map(compo => ({
       label: COMPO_LABEL[compo],
       parts: [1, 2, 3].map(s => ({
         label: STRATE_LABEL[s],
         color: STRATE_COLOR[s],
-        value: strateRows.find(r => r.composition === compo && r.strate_niveau === s)?.nb_placettes ?? 0,
+        value: strateRows.filter(r => r.composition === compo && r.strate_niveau === s)
+          .reduce((sum, r) => sum + r.nb_placettes, 0),
       })),
     }));
-  }, [rows, selectedEco]);
+  }, [rows, selectedEcos]);
 
   function rowLabel(r: FormationRow): string {
     if (tab === 'ecosysteme') return r.formation;
@@ -112,7 +125,14 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, marginBottom: 13, flexWrap: 'wrap' }}>
             <div style={{ paddingBottom: 3 }}>
               <div style={{ ...labelStyle, fontSize: 9, marginBottom: 2 }}>Écosystème</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>{selectedEco || '—'}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>
+                {singleEco ?? (selectedEcos.length === ecosystemes.length ? 'Tous' : (
+                  <>
+                    {selectedEcos.length} sélectionnés
+                    <span style={{ fontSize: 12, fontWeight: 500, color: T.muted }}> · {selectedEcos.join(', ')}</span>
+                  </>
+                ))}
+              </div>
             </div>
             {summary && (
               <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', paddingBottom: 3 }}>
@@ -162,6 +182,7 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
                           background: COMPO_COLOR[r.composition ?? ''] ?? T.dim,
                         }} />
                       )}
+                      {showFormation && <span style={{ color: T.muted, fontWeight: 500 }}>{r.formation} · </span>}
                       {tab === 'strate' && <span style={{ color: T.muted, fontWeight: 500 }}>{COMPO_LABEL[r.composition ?? '']} · </span>}
                       {rowLabel(r)}
                     </td>

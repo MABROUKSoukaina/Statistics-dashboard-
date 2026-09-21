@@ -4,7 +4,10 @@ import L from 'leaflet';
 import LayersIcon from '@mui/icons-material/Layers';
 import MyLocationIcon from '@mui/icons-material/MyLocation';
 import SearchIcon from '@mui/icons-material/Search';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { T, ecosystemeColor, fmt } from '../theme';
+import { NO_FORMATION } from '../useMapFilters';
 import type { PlotFeature } from '../services/api';
 
 const BASEMAPS = [
@@ -188,12 +191,10 @@ function PopupBody({ f, color }: { f: PlotFeature; color: string }) {
   );
 }
 
-export function MapView({ features, ecosystemes, loading, statutFilter, onStatutFilter }: {
+export function MapView({ features, ecosystemes, loading }: {
   features: PlotFeature[];
   ecosystemes: string[];
   loading: boolean;
-  statutFilter: Set<string>;
-  onStatutFilter: (v: string) => void;
 }) {
   const [basemap, setBasemap] = useState<BasemapId>('esri-hybrid');
   const [basemapOpen, setBasemapOpen] = useState(false);
@@ -204,7 +205,18 @@ export function MapView({ features, ecosystemes, loading, statutFilter, onStatut
   const [legendOpen, setLegendOpen] = useState(true);
   const [query, setQuery] = useState('');
   const [resetKey, setResetKey] = useState(0);
+  // Per-écosystème visibility, toggled from the legend's eye buttons — a quick way to
+  // declutter the map. Purely visual: it doesn't touch the Analyse forestière selection,
+  // so the KPI header, tables and "N placettes affichées" count stay unaffected.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLDivElement>(null);
+
+  const toggleHidden = (key: string) =>
+    setHidden(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -225,10 +237,15 @@ export function MapView({ features, ecosystemes, loading, statutFilter, onStatut
     }
     const rows = ecosystemes
       .filter(e => counts.has(e))
-      .map(e => ({ label: e, color: ecosystemeColor(ecosystemes, e), count: counts.get(e)! }));
-    if (none > 0) rows.push({ label: 'Non renseigné', color: T.dim, count: none });
+      .map(e => ({ key: e, label: e, color: ecosystemeColor(ecosystemes, e), count: counts.get(e)! }));
+    if (none > 0) rows.push({ key: NO_FORMATION, label: 'Non renseigné', color: T.dim, count: none });
     return rows;
   }, [features, ecosystemes]);
+
+  const visibleFeatures = useMemo(
+    () => features.filter(f => !hidden.has(f.properties.formation ?? NO_FORMATION)),
+    [features, hidden],
+  );
 
   const bm = BASEMAPS.find(b => b.id === basemap)!;
   const results = query.trim()
@@ -256,7 +273,7 @@ export function MapView({ features, ecosystemes, loading, statutFilter, onStatut
         />
         <ResetOnKey trigger={resetKey} features={features} />
 
-        {features.map(f => {
+        {visibleFeatures.map(f => {
           const [lon, lat] = f.geometry.coordinates;
           const color = ecosystemeColor(ecosystemes, f.properties.formation);
           const hi = f.properties.num_placette === selected;
@@ -342,45 +359,31 @@ export function MapView({ features, ecosystemes, loading, statutFilter, onStatut
           background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginBottom: legendOpen ? 8 : 0,
           fontSize: 11, fontWeight: 650, color: T.text, fontFamily: 'inherit',
         }}>
-          Écosystème (couleur)
+          Écosystème
           <span style={{ color: T.dim, fontSize: 10, transform: legendOpen ? 'none' : 'rotate(180deg)' }}>▾</span>
         </button>
 
         {legendOpen && (
-          <>
-            {/* capped so the Statut group below always stays visible */}
-            <div style={{ maxHeight: 146, overflowY: 'auto', paddingRight: 2 }}>
-              {legendRows.map(r => (
-                <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+          <div style={{ maxHeight: 240, overflowY: 'auto', paddingRight: 2 }}>
+            {legendRows.map(r => {
+              const isHidden = hidden.has(r.key);
+              return (
+                <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, opacity: isHidden ? 0.45 : 1 }}>
                   <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: r.color }} />
                   <span style={{ flex: 1, fontSize: 11, color: T.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {r.label}
                   </span>
                   <span style={{ fontSize: 10, color: T.dim, fontFamily: "'Space Mono', monospace" }}>{r.count}</span>
+                  <button onClick={() => toggleHidden(r.key)} title={isHidden ? 'Afficher sur la carte' : 'Masquer de la carte'} style={{
+                    background: 'none', border: 'none', padding: 0, marginLeft: 1, cursor: 'pointer',
+                    color: isHidden ? T.dim : T.muted, display: 'flex', alignItems: 'center', flexShrink: 0,
+                  }}>
+                    {isHidden ? <VisibilityOffIcon style={{ fontSize: 14 }} /> : <VisibilityIcon style={{ fontSize: 14 }} />}
+                  </button>
                 </div>
-              ))}
-            </div>
-
-            <div style={{ borderTop: `1px solid ${T.border}`, margin: '10px 0 9px' }} />
-            <div style={{ fontSize: 11, fontWeight: 650, color: T.text, marginBottom: 7 }}>Statut</div>
-        {(['programmee', 'visitee', 'controle'] as const).map(s => {
-          const on = statutFilter.has(s);
-          return (
-            <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', cursor: 'pointer' }}>
-              <span style={{
-                width: 13, height: 13, borderRadius: '50%', flexShrink: 0,
-                border: `1.5px solid ${on ? T.green : T.borderStrong}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {on && <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.green }} />}
-              </span>
-              <input type="checkbox" checked={on} onChange={() => onStatutFilter(s)}
-                style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
-              <span style={{ fontSize: 11, color: on ? T.text : T.muted }}>{STATUT_LABEL[s]}</span>
-            </label>
-          );
-        })}
-          </>
+              );
+            })}
+          </div>
         )}
       </div>
 

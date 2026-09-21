@@ -19,7 +19,7 @@ export default function App() {
   const [features, setFeatures] = useState<PlotFeature[]>([]);
   const [formations, setFormations] = useState<FormationRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [analyse, setAnalyse] = useState<AnalyseSelection>({ ecosysteme: '', composition: '', strate: '' });
+  const [analyse, setAnalyse] = useState<AnalyseSelection>({ ecosysteme: [], composition: [], strate: [] });
 
   useEffect(() => {
     if (!user) return;
@@ -66,7 +66,7 @@ export default function App() {
   const activeLabel = mapFilters.activeCount === 0
     ? 'Aucun (vue globale)'
     : `${mapFilters.activeCount} filtre${mapFilters.activeCount > 1 ? 's' : ''} · ${mapFilters.filtered.length} placettes`;
-  const clearEverything = () => { mapFilters.clearAll(); setAnalyse({ ecosysteme: '', composition: '', strate: '' }); };
+  const clearEverything = () => setAnalyse({ ecosysteme: [], composition: [], strate: [] });
 
   return (
     <div style={{ height: '100vh', background: T.bg, overflowY: 'auto' }}>
@@ -91,8 +91,8 @@ export default function App() {
         {page === 'ecosysteme' && (
           <EcosystemePage
             formations={formations} ecosystemes={ecosystemes}
-            selected={analyse.ecosysteme || ecosystemes[0] || ''}
-            onSelect={v => setAnalyse({ ...analyse, ecosysteme: v })}
+            selected={analyse.ecosysteme.length === 1 ? analyse.ecosysteme[0] : (ecosystemes[0] ?? '')}
+            onSelect={v => setAnalyse({ ...analyse, ecosysteme: [v] })}
           />
         )}
         {page === 'placettes' && <PlacettesPage features={mapFilters.filtered} loading={loading} />}

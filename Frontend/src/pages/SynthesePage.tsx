@@ -46,7 +46,7 @@ export function SynthesePage({
 
   // With a selection active the header describes that subset, so progress against the
   // whole programme would be misleading — show the retained placettes instead.
-  const filtre = Boolean(analyse.ecosysteme || analyse.composition || analyse.strate);
+  const filtre = Boolean(analyse.ecosysteme.length || analyse.composition.length || analyse.strate.length);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -93,8 +93,6 @@ export function SynthesePage({
             features={mapFilters.filtered}
             ecosystemes={ecosystemes}
             loading={loading}
-            statutFilter={mapFilters.filters.controle}
-            onStatutFilter={v => mapFilters.toggle('controle', v)}
           />
         </Panel>
 

@@ -3,7 +3,7 @@ import ForestIcon from '@mui/icons-material/Forest';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PersonIcon from '@mui/icons-material/Person';
 import { T, labelStyle } from '../theme';
-import { PlainSelect, Segmented } from './ui/Controls';
+import { MultiSelectDropdown, Segmented } from './ui/Controls';
 import { NO_FORMATION } from '../useMapFilters';
 import type { AuthUser } from '../services/api';
 
@@ -26,9 +26,9 @@ function Group({ title, children, style }: { title: string; children: ReactNode;
 }
 
 export interface AnalyseSelection {
-  ecosysteme: string;
-  composition: string;
-  strate: string;
+  ecosysteme: string[];
+  composition: string[];
+  strate: string[];
 }
 
 export function TopBar({
@@ -93,29 +93,26 @@ export function TopBar({
           has no dead panel space and needs no separate line of its own. */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <Group title="Analyse forestière (carte + tableaux)">
-          <PlainSelect
-            inline label="Écosystème" width={158} value={analyse.ecosysteme}
+          <MultiSelectDropdown
+            inline label="Écosystème" width={168} value={analyse.ecosysteme} allLabel="Tous"
             onChange={v => onAnalyseChange({ ...analyse, ecosysteme: v })}
             options={[
-              { value: '', label: 'Tous' },
               ...ecosystemeOptions.map(e => ({ value: e, label: e })),
               { value: NO_FORMATION, label: 'Non renseigné' },
             ]}
           />
-          <PlainSelect
-            inline label="Composition" width={126} value={analyse.composition}
+          <MultiSelectDropdown
+            inline label="Composition" width={136} value={analyse.composition} allLabel="Toutes"
             onChange={v => onAnalyseChange({ ...analyse, composition: v })}
             options={[
-              { value: '', label: 'Toutes' },
               { value: 'pure', label: 'Pure' },
               { value: 'melange', label: 'Mélange' },
             ]}
           />
-          <PlainSelect
-            inline label="Strate" width={126} value={analyse.strate}
+          <MultiSelectDropdown
+            inline label="Strate" width={136} value={analyse.strate} allLabel="Toutes"
             onChange={v => onAnalyseChange({ ...analyse, strate: v })}
             options={[
-              { value: '', label: 'Toutes' },
               { value: '1', label: 'Dense' },
               { value: '2', label: 'Moy. dense' },
               { value: '3', label: 'Claire' },
