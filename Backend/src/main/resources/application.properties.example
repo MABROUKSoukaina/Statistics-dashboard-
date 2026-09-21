@@ -1,0 +1,37 @@
+spring.application.name=ifn_stats
+
+# ─── Server ───────────────────────────────────────────────────────────────────
+# Different port from the main Geonavigateur-Forestier dashboard (8080) so both
+# can run side by side on the same machine.
+server.port=8081
+
+# ─── PostgreSQL Datasource ────────────────────────────────────────────────────
+# Same IFN_2026 database as the main dashboard — this app only reads (plot, tree,
+# ifn_programme, …) and manages its own app_user table. It never writes to any
+# table owned by the main dashboard.
+spring.datasource.url=jdbc:postgresql://localhost:5432/IFN_2026
+spring.datasource.username=CHANGE_ME
+spring.datasource.password=CHANGE_ME
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# ─── JPA / Hibernate ──────────────────────────────────────────────────────────
+spring.jpa.hibernate.ddl-auto=none
+spring.jpa.show-sql=false
+spring.jpa.open-in-view=false
+
+# ─── H2 Console (disabled) ────────────────────────────────────────────────────
+spring.h2.console.enabled=false
+
+# ─── Bootstrap admin account ──────────────────────────────────────────────────
+# Seeded once into app_user on first startup (see UserDataInitializer), only if
+# the app_user table is empty. Change this password after first login — every
+# other account is created from the app itself (POST /api/users), never from
+# this file. See app.bootstrap.username below to change the seeded username.
+app.bootstrap.username=admin
+app.bootstrap.password=CHANGE_ME
+
+# ─── JWT ─────────────────────────────────────────────────────────────────────
+# Independent secret from the main dashboard — tokens are not interchangeable
+# between the two apps. Generate a fresh random string of at least 32 chars.
+app.jwt.secret=CHANGE_ME_AT_LEAST_32_CHARACTERS_LONG
+app.jwt.expiration-ms=31536000000

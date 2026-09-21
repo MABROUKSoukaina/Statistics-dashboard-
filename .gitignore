@@ -1,0 +1,14 @@
+# Backend
+Backend/target/
+Backend/.mvn/wrapper/maven-wrapper.jar
+Backend/src/main/resources/application.properties
+
+# Frontend
+Frontend/node_modules/
+Frontend/dist/
+Frontend/.vite/
+Frontend/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.log
