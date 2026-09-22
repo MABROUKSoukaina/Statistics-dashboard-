@@ -8,7 +8,12 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { T, ecosystemeColor, fmt } from '../theme';
 import { NO_FORMATION } from '../useMapFilters';
-import type { PlotFeature } from '../services/api';
+import { fetchPlotDetail, type PlotFeature, type PlotDetail } from '../services/api';
+import {
+  EXPOSITION, TOPO_POS, SUBSTRAT, PROFONDEUR_SOL, COUVERTURE_SOL, INTENSITE_PARCOURS,
+  ETAT_SANITAIRE_GENERAL, INTENSITE_INCENDIE, ANCIENNETE_INCENDIE,
+  EMONDAGE, MORTALITE_BRANCHES, POURRITURE_TRONC, CHARBON_MERE,
+} from '../labels';
 
 const BASEMAPS = [
   { id: 'esri-hybrid',  label: 'Esri Satellite',   url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',    attribution: '© Esri, Maxar', maxZoom: 19 },
@@ -132,11 +137,136 @@ function ControlStack({ onReset, onBasemap, basemapOpen }: {
 }
 
 const COMPOSITION_LABEL: Record<string, string> = { pure: 'Pure', melange: 'Mélange' };
-const STRATE_NIVEAU_LABEL: Record<number, string> = { 1: 'Dense', 2: 'Moyennement dense', 3: 'Claire' };
 
-function PopupBody({ f, color }: { f: PlotFeature; color: string }) {
+/** One label/value row, skipped entirely when the value is unknown — a popup with a field
+ *  missing for half the placettes should shrink, not fill up with dashes. */
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  if (children == null || children === '') return null;
+  return (
+    <>
+      <span style={{ color: T.dim }}>{label}</span>
+      <span style={{ color: T.text, fontWeight: 600 }}>{children}</span>
+    </>
+  );
+}
+
+/** Substrat, with the same "code 4 / code 10 get a free-text qualifier" rule as the
+ *  reference fiche (generate_fiche_simple.py) — never invented independently here. */
+function substratLabel(site: PlotDetail['site']): string | null {
+  if (site.substrat == null) return null;
+  if (site.substrat === 10 && site.substrat_autre) return `Autre : ${site.substrat_autre}`;
+  if (site.substrat === 4 && site.substrat_qualifier) return `Sable : ${site.substrat_qualifier}`;
+  return SUBSTRAT[site.substrat] ?? `Code ${site.substrat}`;
+}
+
+function incendieLabel(site: PlotDetail['site']): string {
+  if (!site.signes_incendie) return 'Non';
+  const bits = [
+    site.intensite_incendie != null ? INTENSITE_INCENDIE[site.intensite_incendie] : null,
+    site.annee_incendie != null ? ANCIENNETE_INCENDIE[site.annee_incendie] : null,
+  ].filter(Boolean);
+  return bits.length ? `Oui (${bits.join(', ')})` : 'Oui';
+}
+
+/** "Description de la placette" — classification (écosystème/composition) plus the site
+ *  descriptors (topo/pédologie/couverture/caractéristiques/incendie) and the tree-level
+ *  breakdown, fetched lazily once the popup for this placette opens (see MapView's
+ *  detailCache). Écosystème/composition come from the map GeoJSON (already loaded), the
+ *  rest from the on-demand detail fetch. */
+function DescriptionPlacette({ formation, composition, detail }: {
+  formation: string | null;
+  composition: string | null;
+  detail: PlotDetail | 'loading' | 'error' | undefined;
+}) {
+  const classification = (
+    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
+      <Row label="Écosystème">{formation}</Row>
+      <Row label="Composition">{composition ? COMPOSITION_LABEL[composition] : null}</Row>
+    </div>
+  );
+
+  if (detail === 'loading' || detail === undefined) {
+    return (
+      <>
+        {classification}
+        <div style={{ fontSize: 11.5, color: T.dim, padding: '4px 0' }}>Chargement…</div>
+      </>
+    );
+  }
+  if (detail === 'error') {
+    return (
+      <>
+        {classification}
+        <div style={{ fontSize: 11.5, color: T.red, padding: '4px 0' }}>Erreur de chargement.</div>
+      </>
+    );
+  }
+
+  const { site, arbres, regenerationHa, sanitaireParEssence } = detail;
+  const hasLiege = arbres.liege_demascles > 0 || arbres.liege_non_demascles > 0;
+  const hasMorts = arbres.morts_sur_pied_ha != null || arbres.chablis_ha != null;
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
+        <Row label="Écosystème">{formation}</Row>
+        <Row label="Composition">{composition ? COMPOSITION_LABEL[composition] : null}</Row>
+        <Row label="Strate terrain">{site.strate_terrain}</Row>
+        <Row label="Altitude">{site.altitude != null ? `${fmt(site.altitude)} m` : null}</Row>
+        <Row label="Exposition">{site.exposition != null ? EXPOSITION[site.exposition] : null}</Row>
+        <Row label="Pente">{site.pente != null ? `${fmt(site.pente, 1)} %` : null}</Row>
+        <Row label="Position topo">{site.position_topo != null ? TOPO_POS[site.position_topo] : null}</Row>
+        <Row label="Substrat">{substratLabel(site)}</Row>
+        <Row label="Profondeur du sol">{site.profondeur_sol != null ? PROFONDEUR_SOL[site.profondeur_sol] : null}</Row>
+        <Row label="Couverture du sol">{site.couverture_sol != null ? COUVERTURE_SOL[site.couverture_sol] : null}</Row>
+        <Row label="Hauteur dominante">{site.hauteur_dominante != null ? `${fmt(site.hauteur_dominante, 1)} ${site.hauteur_dominante_unite ?? 'm'}` : null}</Row>
+        <Row label="Intensité de parcours">{site.intensite_parcours != null ? INTENSITE_PARCOURS[site.intensite_parcours] : null}</Row>
+        <Row label="État sanitaire général">{site.etat_sanitaire_general != null ? ETAT_SANITAIRE_GENERAL[site.etat_sanitaire_general] : null}</Row>
+        <Row label="Signes d'incendie">{incendieLabel(site)}</Row>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12, marginTop: 8 }}>
+        <Row label="Arbres coupés">{arbres.coupes_ha != null ? `${fmt(arbres.coupes_ha, 1)} tiges/ha` : null}</Row>
+        {hasMorts && (
+          <Row label="Morts sur pied / Chablis">
+            {`${fmt(arbres.morts_sur_pied_ha, 1)} / ${fmt(arbres.chablis_ha, 1)} tiges/ha`}
+          </Row>
+        )}
+        {hasLiege && (
+          <Row label="Chêne liège">{`${fmt(arbres.liege_demascles)} démasclés, ${fmt(arbres.liege_non_demascles)} non démasclés`}</Row>
+        )}
+        <Row label="Régénération">{regenerationHa != null ? `${fmt(regenerationHa)} brins/ha` : null}</Row>
+      </div>
+
+      {sanitaireParEssence.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: T.dim, marginBottom: 4 }}>État sanitaire par essence</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {sanitaireParEssence.map((s, i) => {
+              const bits = [
+                s.treeh_emondage != null && EMONDAGE[s.treeh_emondage] !== "Pas d'émondage" ? `Émondage ${EMONDAGE[s.treeh_emondage]}` : null,
+                s.treeh_mortalite_branche != null && MORTALITE_BRANCHES[s.treeh_mortalite_branche] !== 'Pas de mortalité de branches' ? `Mort. branches ${MORTALITE_BRANCHES[s.treeh_mortalite_branche]}` : null,
+                s.treeh_pourriture_du_tronc != null && POURRITURE_TRONC[s.treeh_pourriture_du_tronc] !== 'Pas de pourriture' ? `Pourriture ${POURRITURE_TRONC[s.treeh_pourriture_du_tronc]}` : null,
+                s.treeh_charbon_de_la_mere != null && CHARBON_MERE[s.treeh_charbon_de_la_mere] !== 'Absence' ? `Charbon ${CHARBON_MERE[s.treeh_charbon_de_la_mere]}` : null,
+              ].filter(Boolean);
+              return (
+                <div key={i} style={{ fontSize: 11.5 }}>
+                  <span style={{ color: T.text, fontWeight: 600 }}>{s.essence}</span>
+                  <span style={{ color: T.dim }}>{bits.length ? ` — ${bits.join(' · ')}` : ' — sans anomalie'}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function PopupBody({ f, color, detail }: { f: PlotFeature; color: string; detail: PlotDetail | 'loading' | 'error' | undefined }) {
   const p = f.properties;
   const done = p.statut !== 'programmee';
+  const [lon, lat] = f.geometry.coordinates;
   // A visited placette can still carry no living tree (nothing recensable on it), so the
   // dendrometric block only makes sense when there is something to summarise.
   const hasDendro = done && p.nb_arbres_total > 0;
@@ -151,42 +281,67 @@ function PopupBody({ f, color }: { f: PlotFeature; color: string }) {
         }}>{STATUT_LABEL[p.statut]}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
-        {p.formation && <><span style={{ color: T.dim }}>Écosystème</span><span style={{ color: T.text, fontWeight: 600 }}>{p.formation}</span></>}
-        {p.composition && <><span style={{ color: T.dim }}>Composition</span><span style={{ color: T.text, fontWeight: 600 }}>{COMPOSITION_LABEL[p.composition]}</span></>}
-        {p.strate_niveau != null && <><span style={{ color: T.dim }}>Strate</span><span style={{ color: T.text, fontWeight: 600 }}>{STRATE_NIVEAU_LABEL[p.strate_niveau]}</span></>}
-        {p.strate && <><span style={{ color: T.dim }}>Code strate</span><span style={{ color: T.text, fontWeight: 600 }}>{p.strate}</span></>}
-        {p.dpanef && <><span style={{ color: T.dim }}>DPANEF</span><span style={{ color: T.text, fontWeight: 600 }}>{p.dpanef}</span></>}
-        {p.equipe && <><span style={{ color: T.dim }}>Équipe</span><span style={{ color: T.text, fontWeight: 600 }}>{p.equipe.replace(/^Equipe\s+/, '').replace(/\s*\(.*$/, '')}</span></>}
+      <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 2 }}>
+        {/* Info de départ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
+          <Row label="X">{lon.toFixed(5)}</Row>
+          <Row label="Y">{lat.toFixed(5)}</Row>
+          <Row label="DPANEF">{p.dpanef}</Row>
+          <Row label="Équipe">{p.equipe ? p.equipe.replace(/^Equipe\s+/, '').replace(/\s*\(.*$/, '') : null}</Row>
+        </div>
+
+        {done && (
+          <div style={{ marginTop: 9, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.greenLite, marginBottom: 6 }}>
+              Description de la placette
+            </div>
+            <DescriptionPlacette formation={p.formation} composition={p.composition} detail={detail} />
+          </div>
+        )}
+
+        {!hasDendro && (
+          <div style={{
+            marginTop: 9, paddingTop: 8, borderTop: `1px solid ${T.border}`,
+            fontSize: 11.5, color: T.dim, lineHeight: 1.45,
+          }}>
+            {done
+              ? 'Placette visitée, aucun arbre recensable mesuré.'
+              : 'Placette programmée — pas encore inventoriée.'}
+          </div>
+        )}
+
+        {hasDendro && (
+          <div style={{ marginTop: 9, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.cyan, marginBottom: 6 }}>
+              Dendrométrie
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
+              <span style={{ color: T.dim }}>Densité</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nbre_tiges_ha, 1)} tiges/ha</span>
+              <span style={{ color: T.dim }}>Surface terrière</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.surface_terriere_ha, 2)} m²/ha</span>
+              <span style={{ color: T.dim }}>Volume</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.volume_ha, 2)} m³/ha</span>
+              <span style={{ color: T.dim }}>Hauteur moy.</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.hauteur_moyenne, 1)} m</span>
+              <span style={{ color: T.dim }}>Circonférence moy.</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.circonference_moyenne, 1)} cm</span>
+              <span style={{ color: T.dim }}>Arbres</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nb_arbres_total)} dont {fmt(p.nb_echantillons)} éch.</span>
+              <span style={{ color: T.dim }}>Coupés / morts</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nb_coupes)} / {fmt(p.nb_morts)}</span>
+            </div>
+
+            {detail && detail !== 'loading' && detail !== 'error' && [
+              detail.arbres.recensables_c13_moy, detail.arbres.recensables_c0_moy,
+              detail.arbres.recensables_ht_moy, detail.arbres.recensables_h7_moy,
+            ].some(v => v != null) && (
+              <>
+                <div style={{ fontSize: 11, color: T.dim, margin: '8px 0 3px' }}>Mesures moyennes</div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                  <span><span style={{ color: T.dim }}>C1,3 </span><b style={{ color: T.text }}>{fmt(detail.arbres.recensables_c13_moy, 1)} cm</b></span>
+                  <span><span style={{ color: T.dim }}>C0 </span><b style={{ color: T.text }}>{fmt(detail.arbres.recensables_c0_moy, 1)} cm</b></span>
+                  <span><span style={{ color: T.dim }}>HT </span><b style={{ color: T.text }}>{fmt(detail.arbres.recensables_ht_moy, 1)} m</b></span>
+                  <span><span style={{ color: T.dim }}>H7 </span><b style={{ color: T.text }}>{fmt(detail.arbres.recensables_h7_moy, 1)} m</b></span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
-
-      {!hasDendro && (
-        <div style={{
-          marginTop: 9, paddingTop: 8, borderTop: `1px solid ${T.border}`,
-          fontSize: 11.5, color: T.dim, lineHeight: 1.45,
-        }}>
-          {done
-            ? 'Placette visitée, aucun arbre recensable mesuré.'
-            : 'Placette programmée — pas encore inventoriée.'}
-        </div>
-      )}
-
-      {hasDendro && (
-        <div style={{ marginTop: 9, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
-          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.cyan, marginBottom: 6 }}>
-            Dendrométrie
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 14px', fontSize: 12 }}>
-            <span style={{ color: T.dim }}>Densité</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nbre_tiges_ha, 1)} tiges/ha</span>
-            <span style={{ color: T.dim }}>Surface terrière</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.surface_terriere_ha, 2)} m²/ha</span>
-            <span style={{ color: T.dim }}>Volume</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.volume_ha, 2)} m³/ha</span>
-            <span style={{ color: T.dim }}>Hauteur moy.</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.hauteur_moyenne, 1)} m</span>
-            <span style={{ color: T.dim }}>Circonférence moy.</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.circonference_moyenne, 1)} cm</span>
-            <span style={{ color: T.dim }}>Arbres</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nb_arbres_total)} dont {fmt(p.nb_echantillons)} éch.</span>
-            <span style={{ color: T.dim }}>Coupés / morts</span><span style={{ color: T.text, fontWeight: 600 }}>{fmt(p.nb_coupes)} / {fmt(p.nb_morts)}</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -217,6 +372,19 @@ export function MapView({ features, ecosystemes, loading }: {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+
+  // "Description de la placette" is fetched lazily — only for the placette whose popup is
+  // actually open — and cached by num_placette so reopening the same popup doesn't refetch.
+  const [openPlacette, setOpenPlacette] = useState<string | null>(null);
+  const [detailCache, setDetailCache] = useState<Record<string, PlotDetail | 'loading' | 'error'>>({});
+
+  useEffect(() => {
+    if (!openPlacette || detailCache[openPlacette]) return;
+    setDetailCache(prev => ({ ...prev, [openPlacette]: 'loading' }));
+    fetchPlotDetail(openPlacette)
+      .then(d => setDetailCache(prev => ({ ...prev, [openPlacette]: d })))
+      .catch(() => setDetailCache(prev => ({ ...prev, [openPlacette]: 'error' })));
+  }, [openPlacette]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -279,8 +447,12 @@ export function MapView({ features, ecosystemes, loading }: {
           const hi = f.properties.num_placette === selected;
           return (
             <Marker key={f.properties.num_placette} position={[lat, lon]} icon={markerIcon(hi ? T.orange : color, hi, zoom)}>
-              <Popup minWidth={232} maxWidth={300} className="ifn-popup" autoPan autoPanPadding={[28, 28]}>
-                <PopupBody f={f} color={color} />
+              <Popup minWidth={252} maxWidth={340} className="ifn-popup" autoPan autoPanPadding={[28, 28]}
+                eventHandlers={{
+                  add: () => setOpenPlacette(f.properties.num_placette),
+                  remove: () => setOpenPlacette(prev => prev === f.properties.num_placette ? null : prev),
+                }}>
+                <PopupBody f={f} color={color} detail={detailCache[f.properties.num_placette]} />
               </Popup>
             </Marker>
           );

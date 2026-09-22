@@ -171,3 +171,54 @@ export async function fetchFormationDetail(formation: string): Promise<Formation
   if (!res.ok) throw new Error(`Erreur détail écosystème (${res.status})`);
   return res.json();
 }
+
+// ─── Description de la placette (popup carte) ──────────────────────────────────
+
+export interface PlotDetail {
+  plotNo: string;
+  site: {
+    strate_terrain: string | null;
+    altitude: number | null;
+    exposition: number | null;
+    pente: number | null;
+    position_topo: number | null;
+    substrat: number | null;
+    substrat_qualifier: string | null;
+    substrat_autre: string | null;
+    profondeur_sol: number | null;
+    couverture_sol: number | null;
+    hauteur_dominante: number | null;
+    hauteur_dominante_unite: string | null;
+    intensite_parcours: number | null;
+    etat_sanitaire_general: number | null;
+    signes_incendie: boolean | null;
+    intensite_incendie: number | null;
+    annee_incendie: number | null;
+  };
+  arbres: {
+    recensables_c13_moy: number | null;
+    recensables_c0_moy: number | null;
+    recensables_ht_moy: number | null;
+    recensables_h7_moy: number | null;
+    coupes_ha: number | null;
+    morts_sur_pied_ha: number | null;
+    chablis_ha: number | null;
+    liege_demascles: number;
+    liege_non_demascles: number;
+  };
+  regenerationHa: number | null;
+  sanitaireParEssence: {
+    essence: string;
+    treeh_emondage: number | null;
+    treeh_mortalite_branche: number | null;
+    treeh_pourriture_du_tronc: number | null;
+    treeh_charbon_de_la_mere: number | null;
+  }[];
+}
+
+export async function fetchPlotDetail(numPlacette: string): Promise<PlotDetail> {
+  const res = await fetch(`/api/stats/plots/${encodeURIComponent(numPlacette)}/detail`, { headers: authHeaders() });
+  if (res.status === 401) { clearAuth(); throw new Error('Session expirée'); }
+  if (!res.ok) throw new Error(`Erreur détail placette (${res.status})`);
+  return res.json();
+}
