@@ -61,7 +61,8 @@ export function SynthesePage({
             sub={`/ ${fmt(stats?.nb_placettes_programmees)} programmées`} progress={visitPct} />
         )}
         <KpiCard icon={<ForestIcon style={{ fontSize: 17 }} />} color={T.teal}
-          label="Arbres" value={fmt(stats?.nb_arbres_total)} sub="mesurés, tous états" />
+          label="Arbres" value={fmt(stats?.nb_arbres_total)}
+          sub={`${fmt(stats?.nb_coupes_total)} coupés · ${fmt(stats?.nb_morts_total)} morts`} />
         <KpiCard icon={<GridOnIcon style={{ fontSize: 16 }} />} color={T.orange}
           label="Densité" value={fmt(stats?.densite_moyenne_ha, 0)} unit="tiges/ha" sub="moyenne par placette" />
         <KpiCard icon={<CropSquareIcon style={{ fontSize: 17 }} />} color={T.purple}
@@ -73,8 +74,7 @@ export function SynthesePage({
         <KpiCard icon={<GrassIcon style={{ fontSize: 17 }} />} color={T.greenLite}
           label="Régénération" value={fmt(stats?.regeneration_moyenne_ha, 0)} unit="brins/ha" sub="sous-placette 30 m" />
         <KpiCard icon={<ScienceIcon style={{ fontSize: 16 }} />} color={T.pink}
-          label="Échantillons" value={fmt(stats?.nb_echantillons_total)}
-          sub={`${fmt(stats?.nb_coupes_total)} coupés · ${fmt(stats?.nb_morts_total)} morts`} />
+          label="Échantillons" value={fmt(stats?.nb_echantillons_total)} />
       </div>
 
       {/* ── Map + écosystème mix ──────────────────────────────────── */}

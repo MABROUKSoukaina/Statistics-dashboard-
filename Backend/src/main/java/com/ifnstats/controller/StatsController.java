@@ -243,9 +243,24 @@ public class StatsController {
             "  COALESCE(pd_reg.nb_coupes, pd_ctrl.nb_coupes, pd_cs.nb_coupes, 0)                   AS nb_coupes, " +
             "  COALESCE(pd_reg.nb_morts, pd_ctrl.nb_morts, pd_cs.nb_morts, 0)                       AS nb_morts, " +
             "  COALESCE(pd_reg.nb_vivants, pd_ctrl.nb_vivants, pd_cs.nb_vivants, 0)                 AS nb_vivants, " +
-            "  ROUND(COALESCE(pd_reg.nbre_tiges_ha, pd_ctrl.nbre_tiges_ha, pd_cs.nbre_tiges_ha)::numeric, 1)               AS nbre_tiges_ha, " +
-            "  ROUND(COALESCE(pd_reg.surface_terriere_ha, pd_ctrl.surface_terriere_ha, pd_cs.surface_terriere_ha)::numeric, 2) AS surface_terriere_ha, " +
-            "  ROUND(COALESCE(pd_reg.volume_ha, pd_ctrl.volume_ha, pd_cs.volume_ha)::numeric, 2)                           AS volume_ha, " +
+            // A visited plot with trees but none of them living (all coupé/mort) is a real,
+            // meaningful "0" for these three SUM-based figures — Postgres's SUM returns NULL
+            // over zero matching rows, not 0, so without the fallback it would misleadingly
+            // render as "—" (no data) right next to a genuinely-computed "0" elsewhere in the
+            // same popup. Guarded on pd_*.plot_plot_no so an actually-unvisited "programmée"
+            // placette (no plot_dendro row at all) still reports unknown, not a false 0 — that
+            // distinction matters here since the Placettes table renders this same field for
+            // every placette, visited or not. Hauteur/circonférence stay nullable regardless:
+            // the mean of zero living trees is undefined, not zero.
+            "  CASE WHEN COALESCE(pd_reg.plot_plot_no, pd_ctrl.plot_plot_no, pd_cs.plot_plot_no) IS NOT NULL " +
+            "    THEN ROUND(COALESCE(pd_reg.nbre_tiges_ha, pd_ctrl.nbre_tiges_ha, pd_cs.nbre_tiges_ha, 0)::numeric, 1) " +
+            "    ELSE NULL END AS nbre_tiges_ha, " +
+            "  CASE WHEN COALESCE(pd_reg.plot_plot_no, pd_ctrl.plot_plot_no, pd_cs.plot_plot_no) IS NOT NULL " +
+            "    THEN ROUND(COALESCE(pd_reg.surface_terriere_ha, pd_ctrl.surface_terriere_ha, pd_cs.surface_terriere_ha, 0)::numeric, 2) " +
+            "    ELSE NULL END AS surface_terriere_ha, " +
+            "  CASE WHEN COALESCE(pd_reg.plot_plot_no, pd_ctrl.plot_plot_no, pd_cs.plot_plot_no) IS NOT NULL " +
+            "    THEN ROUND(COALESCE(pd_reg.volume_ha, pd_ctrl.volume_ha, pd_cs.volume_ha, 0)::numeric, 2) " +
+            "    ELSE NULL END AS volume_ha, " +
             "  ROUND(COALESCE(pd_reg.c1_30_moy, pd_ctrl.c1_30_moy, pd_cs.c1_30_moy)::numeric, 1)                           AS circonference_moyenne, " +
             "  ROUND(COALESCE(pd_reg.ht_moy, pd_ctrl.ht_moy, pd_cs.ht_moy)::numeric, 1)                                    AS hauteur_moyenne " +
             "FROM ifn_programme p " +

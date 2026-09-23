@@ -110,7 +110,7 @@ export function TopBar({
             ]}
           />
           <MultiSelectDropdown
-            inline label="Strate" width={136} value={analyse.strate} allLabel="Toutes"
+            inline label="Densité" width={136} value={analyse.strate} allLabel="Toutes"
             onChange={v => onAnalyseChange({ ...analyse, strate: v })}
             options={[
               { value: '1', label: 'Dense' },

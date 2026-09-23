@@ -44,6 +44,35 @@ public class FormationController {
     // Shared écosystème classification — see FormationMapping.
     private static final String FORMATION_CASE = FormationMapping.caseExpr("p");
 
+    /**
+     * One row per physical location (ifn_programme.num_placette), classified with the same
+     * regular/contrôle/contrôle-service priority as StatsController#getMap — used everywhere
+     * a "nombre de placettes" figure needs to count physical sites, not visit records. Without
+     * this, a location visited twice (a regular visit plus a later SREA contrôle, both
+     * classified) was counted twice by {@code COUNT(DISTINCT plot_no)} over the raw plot
+     * table — 56 locations locally, enough to visibly desync the donut/pivot's per-écosystème
+     * counts from the map's one-marker-per-location legend (e.g. Chêne liège read 295 instead
+     * of 273). Dendrometric averages deliberately do NOT use this — see plot_classified below.
+     */
+    private static final String LOC_CTE =
+        "loc AS ( " +
+        "  SELECT p.num_placette AS plot_no, " +
+        "    COALESCE(" + FormationMapping.caseExpr("reg") + ", " + FormationMapping.caseExpr("ctrl") + ", " + FormationMapping.caseExpr("cs") + ") AS formation, " +
+        "    COALESCE(" + FormationMapping.compositionExpr("reg") + ", " + FormationMapping.compositionExpr("ctrl") + ", " + FormationMapping.compositionExpr("cs") + ") AS composition, " +
+        "    COALESCE(" + FormationMapping.strateExpr("reg") + ", " + FormationMapping.strateExpr("ctrl") + ", " + FormationMapping.strateExpr("cs") + ") AS strate_niveau, " +
+        "    COALESCE(reg.donnees_topographiques_plot_elevation, ctrl.donnees_topographiques_plot_elevation, cs.donnees_topographiques_plot_elevation) AS altitude, " +
+        "    COALESCE(reg.donnees_topographiques_plot_topo_exposition, ctrl.donnees_topographiques_plot_topo_exposition, cs.donnees_topographiques_plot_topo_exposition) AS exposition, " +
+        "    COALESCE(reg.donnees_topographiques_plot_topo_position, ctrl.donnees_topographiques_plot_topo_position, cs.donnees_topographiques_plot_topo_position) AS position_topo, " +
+        "    COALESCE(reg.donnees_topographiques_plot_pente, ctrl.donnees_topographiques_plot_pente, cs.donnees_topographiques_plot_pente) AS pente, " +
+        "    COALESCE(reg.description_pedologique_substrat, ctrl.description_pedologique_substrat, cs.description_pedologique_substrat) AS substrat, " +
+        "    COALESCE(reg.description_pedologique_type_de_sol, ctrl.description_pedologique_type_de_sol, cs.description_pedologique_type_de_sol) AS type_sol " +
+        "  FROM ifn_programme p " +
+        "  LEFT JOIN plot reg  ON reg.plot_no  = p.num_placette " +
+        "  LEFT JOIN plot ctrl ON ctrl.plot_no = p.num_placette || 'C' " +
+        "  LEFT JOIN plot cs   ON cs.plot_no   = p.num_placette || 'CS' " +
+        "  WHERE COALESCE(reg.plot_no, ctrl.plot_no, cs.plot_no) IS NOT NULL " +
+        ")";
+
     // Régénération subplot ≈ 2827.43 m² (rayon 30 m) — same convention as the reference
     // report's "brins/ha" figures (its sommaire_regeneration_999_30 view) and documented
     // in scripts/generate_fiche_indicateurs.py. Cross-checked locally: raw average of
@@ -79,30 +108,54 @@ public class FormationController {
         "    SUM(COALESCE(reg_nbre_sup_1_3,0)+COALESCE(reg_nbre_inf_1_3,0)) * (10000.0/2827.43) AS regen_ha " +
         "  FROM regeneration GROUP BY plot_plot_no " +
         "), " +
+        // Raw per-visit-record rows — deliberately NOT deduplicated by location: a control
+        // re-measurement is its own observation for the dendrometric averages, matching
+        // StatsController's documented convention (collapsing it first would shift every mean).
         "plot_classified AS ( " +
         "  SELECT p.plot_no, " +
         "    " + FORMATION_CASE + " AS formation, " +
         "    CASE WHEN COALESCE(p.strate_terrain_composition, false) THEN 'melange' ELSE 'pure' END AS composition, " +
         "    CASE WHEN p.strate_terrain_densite IN (3,4) THEN 3 ELSE p.strate_terrain_densite END AS strate_niveau " +
         "  FROM plot p " +
+        "), " +
+        LOC_CTE + ", " +
+        "agg AS ( " +
+        "  SELECT pc.formation, pc.composition, pc.strate_niveau, " +
+        "    GROUPING(pc.composition) AS g_comp, GROUPING(pc.strate_niveau) AS g_strate, " +
+        "    SUM(pd.nb_arbres_total) AS nb_arbres, " +
+        "    SUM(pd.nb_echantillons) AS nb_echantillons, " +
+        "    ROUND(AVG(pd.nbre_tiges_ha)::numeric, 1) AS densite_ha, " +
+        "    ROUND(AVG(pd.surface_terriere_ha)::numeric, 2) AS surface_terriere_ha, " +
+        "    ROUND(AVG(pd.volume_ha)::numeric, 2) AS volume_ha, " +
+        "    ROUND(AVG(pd.ht_moy)::numeric, 1) AS hauteur_moyenne, " +
+        "    ROUND(AVG(pd.c1_30_moy)::numeric, 1) AS circonference_moyenne, " +
+        "    ROUND(AVG(rc.regen_ha)::numeric, 0) AS regeneration_ha " +
+        "  FROM plot_classified pc " +
+        "  LEFT JOIN plot_dendro pd ON pd.plot_plot_no = pc.plot_no " +
+        "  LEFT JOIN regen_calc rc ON rc.plot_plot_no = pc.plot_no " +
+        "  WHERE pc.formation IS NOT NULL " +
+        "  GROUP BY GROUPING SETS ((pc.formation), (pc.formation, pc.composition), (pc.formation, pc.composition, pc.strate_niveau)) " +
+        "), " +
+        // Placette counts from the deduplicated locations, at the same three levels — joined
+        // to `agg` below only after BOTH sides have already been through their own GROUPING
+        // SETS, since composition/strate_niveau are only correctly NULLed post-aggregation.
+        "counts AS ( " +
+        "  SELECT formation, composition, strate_niveau, " +
+        "    GROUPING(composition) AS g_comp, GROUPING(strate_niveau) AS g_strate, " +
+        "    COUNT(*) AS nb_placettes " +
+        "  FROM loc WHERE formation IS NOT NULL " +
+        "  GROUP BY GROUPING SETS ((formation), (formation, composition), (formation, composition, strate_niveau)) " +
         ") " +
-        "SELECT pc.formation, pc.composition, pc.strate_niveau, " +
-        "  GROUPING(pc.composition) AS g_comp, GROUPING(pc.strate_niveau) AS g_strate, " +
-        "  COUNT(DISTINCT pc.plot_no) AS nb_placettes, " +
-        "  SUM(pd.nb_arbres_total) AS nb_arbres, " +
-        "  SUM(pd.nb_echantillons) AS nb_echantillons, " +
-        "  ROUND(AVG(pd.nbre_tiges_ha)::numeric, 1) AS densite_ha, " +
-        "  ROUND(AVG(pd.surface_terriere_ha)::numeric, 2) AS surface_terriere_ha, " +
-        "  ROUND(AVG(pd.volume_ha)::numeric, 2) AS volume_ha, " +
-        "  ROUND(AVG(pd.ht_moy)::numeric, 1) AS hauteur_moyenne, " +
-        "  ROUND(AVG(pd.c1_30_moy)::numeric, 1) AS circonference_moyenne, " +
-        "  ROUND(AVG(rc.regen_ha)::numeric, 0) AS regeneration_ha " +
-        "FROM plot_classified pc " +
-        "LEFT JOIN plot_dendro pd ON pd.plot_plot_no = pc.plot_no " +
-        "LEFT JOIN regen_calc rc ON rc.plot_plot_no = pc.plot_no " +
-        "WHERE pc.formation IS NOT NULL " +
-        "GROUP BY GROUPING SETS ((pc.formation), (pc.formation, pc.composition), (pc.formation, pc.composition, pc.strate_niveau)) " +
-        "ORDER BY pc.formation, g_comp, pc.composition, g_strate, pc.strate_niveau";
+        "SELECT a.formation, a.composition, a.strate_niveau, a.g_comp, a.g_strate, " +
+        "  COALESCE(c.nb_placettes, 0) AS nb_placettes, " +
+        "  a.nb_arbres, a.nb_echantillons, a.densite_ha, a.surface_terriere_ha, a.volume_ha, " +
+        "  a.hauteur_moyenne, a.circonference_moyenne, a.regeneration_ha " +
+        "FROM agg a " +
+        "LEFT JOIN counts c ON c.formation = a.formation " +
+        "  AND c.composition IS NOT DISTINCT FROM a.composition " +
+        "  AND c.strate_niveau IS NOT DISTINCT FROM a.strate_niveau " +
+        "  AND c.g_comp = a.g_comp AND c.g_strate = a.g_strate " +
+        "ORDER BY a.formation, a.g_comp, a.composition, a.g_strate, a.strate_niveau";
 
     /**
      * GET /api/stats/formations — one row per (écosystème, composition?, strate?) combination,
@@ -128,50 +181,46 @@ public class FormationController {
      */
     @GetMapping("/formations/{formation}/detail")
     public ResponseEntity<Map<String, Object>> getFormationDetail(@PathVariable String formation) {
+        // Raw per-visit-record rows — only for the tree-structure histograms below, where a
+        // control re-measurement's trees are additional real observations (see FORMATION_SQL).
         String plotsCte =
             "plots AS ( " +
-            "  SELECT p.plot_no, " +
-            "    p.donnees_topographiques_plot_elevation AS altitude, " +
-            "    p.donnees_topographiques_plot_topo_exposition AS exposition, " +
-            "    p.donnees_topographiques_plot_topo_position AS position_topo, " +
-            "    p.donnees_topographiques_plot_pente AS pente, " +
-            "    p.description_pedologique_substrat AS substrat, " +
-            "    p.description_pedologique_type_de_sol AS type_sol " +
+            "  SELECT p.plot_no " +
             "  FROM plot p WHERE " + FORMATION_CASE + " = ? " +
             ")";
 
         Map<String, Object> result = new LinkedHashMap<>();
 
-        // ── Descripteurs quantitatifs ───────────────────────────────────────────
+        // ── Descripteurs quantitatifs — une ligne par placette (lieu), pas par visite ──
         String sqlAlt =
-            "WITH " + plotsCte + " " +
+            "WITH " + LOC_CTE + " " +
             "SELECT COUNT(*) AS nb_placettes, MIN(altitude) AS altitude_min, MAX(altitude) AS altitude_max " +
-            "FROM plots";
+            "FROM loc WHERE formation = ?";
         List<Map<String, Object>> altRows = jdbc.queryForList(sqlAlt, formation);
         result.put("resume", altRows.isEmpty() ? Map.of() : altRows.get(0));
 
-        // ── Descripteurs qualitatifs — comptage de placettes par modalité ──────
+        // ── Descripteurs qualitatifs — comptage de placettes (lieux) par modalité ──────
         result.put("exposition", jdbc.queryForList(
-            "WITH " + plotsCte + " SELECT exposition AS code, COUNT(*) AS nb " +
-            "FROM plots WHERE exposition IS NOT NULL GROUP BY exposition ORDER BY exposition", formation));
+            "WITH " + LOC_CTE + " SELECT exposition AS code, COUNT(*) AS nb " +
+            "FROM loc WHERE formation = ? AND exposition IS NOT NULL GROUP BY exposition ORDER BY exposition", formation));
         result.put("position_topo", jdbc.queryForList(
-            "WITH " + plotsCte + " SELECT position_topo AS code, COUNT(*) AS nb " +
-            "FROM plots WHERE position_topo IS NOT NULL GROUP BY position_topo ORDER BY position_topo", formation));
+            "WITH " + LOC_CTE + " SELECT position_topo AS code, COUNT(*) AS nb " +
+            "FROM loc WHERE formation = ? AND position_topo IS NOT NULL GROUP BY position_topo ORDER BY position_topo", formation));
         result.put("substrat", jdbc.queryForList(
-            "WITH " + plotsCte + " SELECT substrat AS code, COUNT(*) AS nb " +
-            "FROM plots WHERE substrat IS NOT NULL GROUP BY substrat ORDER BY substrat", formation));
+            "WITH " + LOC_CTE + " SELECT substrat AS code, COUNT(*) AS nb " +
+            "FROM loc WHERE formation = ? AND substrat IS NOT NULL GROUP BY substrat ORDER BY substrat", formation));
         result.put("type_sol", jdbc.queryForList(
-            "WITH " + plotsCte + " SELECT type_sol AS code, COUNT(*) AS nb " +
-            "FROM plots WHERE type_sol IS NOT NULL GROUP BY type_sol ORDER BY type_sol", formation));
+            "WITH " + LOC_CTE + " SELECT type_sol AS code, COUNT(*) AS nb " +
+            "FROM loc WHERE formation = ? AND type_sol IS NOT NULL GROUP BY type_sol ORDER BY type_sol", formation));
         result.put("pente", jdbc.queryForList(
-            "WITH " + plotsCte + " " +
+            "WITH " + LOC_CTE + " " +
             "SELECT CASE WHEN pente <= 10 THEN '0-10' WHEN pente <= 20 THEN '11-20' " +
             "            WHEN pente <= 30 THEN '21-30' WHEN pente <= 40 THEN '31-40' " +
             "            WHEN pente <= 50 THEN '41-50' ELSE '>50' END AS classe, " +
             "       MIN(CASE WHEN pente <= 10 THEN 0 WHEN pente <= 20 THEN 11 WHEN pente <= 30 THEN 21 " +
             "                WHEN pente <= 40 THEN 31 WHEN pente <= 50 THEN 41 ELSE 51 END) AS ordre, " +
             "       COUNT(*) AS nb " +
-            "FROM plots WHERE pente IS NOT NULL GROUP BY classe ORDER BY ordre", formation));
+            "FROM loc WHERE formation = ? AND pente IS NOT NULL GROUP BY classe ORDER BY ordre", formation));
 
         // ── Structure — histogrammes circonférence (20 cm) et hauteur (2 m) ─────
         // sur les arbres vivants des placettes de cet écosystème.

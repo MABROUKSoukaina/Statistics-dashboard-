@@ -196,24 +196,17 @@ export interface PlotDetail {
     annee_incendie: number | null;
   };
   arbres: {
-    recensables_c13_moy: number | null;
-    recensables_c0_moy: number | null;
-    recensables_ht_moy: number | null;
-    recensables_h7_moy: number | null;
-    coupes_ha: number | null;
-    morts_sur_pied_ha: number | null;
-    chablis_ha: number | null;
+    densite_plot: number | null;
+    surface_terriere_plot: number | null;
+    volume_plot: number | null;
+    c0_moyenne: number | null;
+    hauteur_max: number | null;
+    hauteur_min: number | null;
+    pct_sains: number | null;
     liege_demascles: number;
     liege_non_demascles: number;
   };
   regenerationHa: number | null;
-  sanitaireParEssence: {
-    essence: string;
-    treeh_emondage: number | null;
-    treeh_mortalite_branche: number | null;
-    treeh_pourriture_du_tronc: number | null;
-    treeh_charbon_de_la_mere: number | null;
-  }[];
 }
 
 export async function fetchPlotDetail(numPlacette: string): Promise<PlotDetail> {

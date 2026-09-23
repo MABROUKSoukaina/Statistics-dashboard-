@@ -118,7 +118,7 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
         action={<Segmented size="sm" value={tab} onChange={setTab} options={[
           { value: 'ecosysteme', label: 'Écosystème' },
           { value: 'composition', label: 'Composition' },
-          { value: 'strate', label: 'Strate' },
+          { value: 'strate', label: 'Densité' },
         ]} />}
       >
         {tab !== 'ecosysteme' && (
@@ -162,7 +162,7 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
               <thead>
                 <tr style={{ background: T.panelAlt }}>
                   <th style={{ ...th, textAlign: 'left' }}>
-                    {tab === 'ecosysteme' ? 'Écosystème' : tab === 'composition' ? 'Composition' : 'Strate'}
+                    {tab === 'ecosysteme' ? 'Écosystème' : tab === 'composition' ? 'Composition' : 'Densité'}
                   </th>
                   <th style={th}>Placettes</th>
                   {metricCols.map(c => (
@@ -182,7 +182,7 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
                           background: COMPO_COLOR[r.composition ?? ''] ?? T.dim,
                         }} />
                       )}
-                      {showFormation && <span style={{ color: T.muted, fontWeight: 500 }}>{r.formation} · </span>}
+                      {tab !== 'ecosysteme' && showFormation && <span style={{ color: T.muted, fontWeight: 500 }}>{r.formation} · </span>}
                       {tab === 'strate' && <span style={{ color: T.muted, fontWeight: 500 }}>{COMPO_LABEL[r.composition ?? '']} · </span>}
                       {rowLabel(r)}
                     </td>
@@ -218,7 +218,7 @@ export function AnalyseForestiere({ rows, loading, analyse, ecosystemes }: {
       </Panel>
 
       {/* ── Composition × strate mix ────────────────────────────────── */}
-      <Panel title="Répartition par composition et strate">
+      <Panel title="Placettes par densité de couvert et composition">
         <ChartLegend items={[1, 2, 3].map(s => ({ label: STRATE_LABEL[s], color: STRATE_COLOR[s] }))} />
         <div style={{ marginTop: 10 }}>
           <StackedBarChart groups={stackGroups} />

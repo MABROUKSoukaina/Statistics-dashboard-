@@ -68,24 +68,45 @@ public class PlotDetailController {
             "FROM plot WHERE plot_no = ?";
         List<Map<String, Object>> siteRows = jdbc.queryForList(siteSql, plotNo);
 
-        // "Arbres recensables" = vivants + dépérissants (tree_etat_vegetatif 1 ou 2), matching
-        // the reference fiche's own section 3.1 title. C1.3/C0/HT/H7 are per-tree measurements
-        // (cm or m) recorded together on every recensable tree — never a "per hectare" figure
-        // themselves — so they're reported as this plot's average values, shown alongside
-        // Densité/ST/Volume in the popup's "Dendrométrie" block (already this tree group's rate).
+        // Circonférence C0 / hauteur max-min use the SAME "vivants uniquement" (état=1) scope
+        // as circonférence_moyenne/hauteur_moyenne already shown from the map feature (see
+        // StatsController's TREE_CALC_CTE), so every measurement in "Description quantitative"
+        // describes the same group of trees. % sains = part des arbres notés (tree_health non
+        // nul) évalués en pleine vigueur (code 1) — voir coded_list_vf.xlsx "État sanitaire de
+        // l'arbre". Chêne liège démasclage counts are raw tallies, not restricted to état=1,
+        // since a demasclage record can exist on a tree in any state.
+        //
+        // densite_plot/surface_terriere_plot/volume_plot are this placette's own physical
+        // figures — a plain stem count and the raw Σg/Σv over the actual (small) area walked,
+        // WITHOUT the ×facteur expansion — as distinct from "Indicateurs rapportés à l'hectare"
+        // below, which extrapolates the same trees to a full hectare. g_m2/v_m3 mirror
+        // StatsController's TREE_CALC_CTE exactly (not re-derived).
         String treeSql =
             "WITH t AS ( " +
-            "  SELECT *, 10000.0 / NULLIF(tree_ss_placette, 0) AS facteur " +
+            "  SELECT *, " +
+            "    POWER(tree_c1_3, 2) / (4 * PI() * 10000) AS g_m2, " +
+            "    CASE " +
+            "      WHEN tree_dm IS NOT NULL AND tree_ht IS NOT NULL " +
+            "        THEN (PI() / 4) * POWER(tree_dm / 100.0, 2) * tree_ht " +
+            "      WHEN tree_ht IS NOT NULL " +
+            "        THEN (POWER(tree_c1_3, 2) / (4 * PI() * 10000)) * tree_ht * 0.45 " +
+            "      ELSE 0 " +
+            "    END AS v_m3 " +
             "  FROM tree WHERE plot_plot_no = ? " +
             ") " +
             "SELECT " +
-            "  ROUND(AVG(tree_c1_3) FILTER (WHERE tree_etat_vegetatif IN (1,2))::numeric, 1) AS recensables_c13_moy, " +
-            "  ROUND(AVG(tree_c0)   FILTER (WHERE tree_etat_vegetatif IN (1,2))::numeric, 1) AS recensables_c0_moy, " +
-            "  ROUND(AVG(tree_ht)   FILTER (WHERE tree_etat_vegetatif IN (1,2))::numeric, 1) AS recensables_ht_moy, " +
-            "  ROUND(AVG(tree_h7)   FILTER (WHERE tree_etat_vegetatif IN (1,2))::numeric, 1) AS recensables_h7_moy, " +
-            "  ROUND(SUM(facteur) FILTER (WHERE tree_etat_vegetatif = 3)::numeric, 1) AS coupes_ha, " +
-            "  ROUND(SUM(facteur) FILTER (WHERE tree_etat_vegetatif = 4 AND dead_etat IN (1,2))::numeric, 1) AS morts_sur_pied_ha, " +
-            "  ROUND(SUM(facteur) FILTER (WHERE tree_etat_vegetatif = 4 AND dead_etat = 3)::numeric, 1) AS chablis_ha, " +
+            // COALESCE(...,0): this endpoint is only ever called for a placette that has at
+            // least one tree record (see hasDendro in MapView), so a plain COUNT/SUM returning
+            // 0 or NULL both mean the same real thing here — "no living trees" — and should
+            // render the same way. Postgres's SUM returns NULL (not 0) over zero matching rows.
+            "  COUNT(*) FILTER (WHERE tree_etat_vegetatif = 1) AS densite_plot, " +
+            "  ROUND(COALESCE(SUM(g_m2) FILTER (WHERE tree_etat_vegetatif = 1), 0)::numeric, 3) AS surface_terriere_plot, " +
+            "  ROUND(COALESCE(SUM(v_m3) FILTER (WHERE tree_etat_vegetatif = 1), 0)::numeric, 3) AS volume_plot, " +
+            "  ROUND(AVG(tree_c0) FILTER (WHERE tree_etat_vegetatif = 1)::numeric, 1) AS c0_moyenne, " +
+            "  MAX(tree_ht) FILTER (WHERE tree_etat_vegetatif = 1) AS hauteur_max, " +
+            "  MIN(tree_ht) FILTER (WHERE tree_etat_vegetatif = 1) AS hauteur_min, " +
+            "  ROUND(100.0 * COUNT(*) FILTER (WHERE tree_health = 1) " +
+            "    / NULLIF(COUNT(*) FILTER (WHERE tree_health IS NOT NULL), 0), 0) AS pct_sains, " +
             "  COUNT(*) FILTER (WHERE tree_liege = true AND treecl_etat_demasclage = 1) AS liege_demascles, " +
             "  COUNT(*) FILTER (WHERE tree_liege = true AND treecl_etat_demasclage = 2) AS liege_non_demascles " +
             "FROM t";
@@ -96,20 +117,11 @@ public class PlotDetailController {
             "FROM regeneration WHERE plot_plot_no = ?";
         List<Map<String, Object>> regenRows = jdbc.queryForList(regenSql, plotNo);
 
-        // État sanitaire par essence — a dedicated per-species health survey (stand_health),
-        // distinct from the per-tree tree_health code used in the "Dendrométrie" block.
-        String sanitaireSql =
-            "SELECT treeh_species_scientific_name AS essence, treeh_emondage, " +
-            "  treeh_mortalite_branche, treeh_pourriture_du_tronc, treeh_charbon_de_la_mere " +
-            "FROM stand_health WHERE plot_plot_no = ? ORDER BY essence";
-        List<Map<String, Object>> sanitaireRows = jdbc.queryForList(sanitaireSql, plotNo);
-
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("plotNo", plotNo);
         result.put("site", siteRows.isEmpty() ? Map.of() : siteRows.get(0));
         result.put("arbres", treeRows.isEmpty() ? Map.of() : treeRows.get(0));
         result.put("regenerationHa", regenRows.isEmpty() ? null : regenRows.get(0).get("regeneration_ha"));
-        result.put("sanitaireParEssence", sanitaireRows);
         return ResponseEntity.ok(result);
     }
 }
